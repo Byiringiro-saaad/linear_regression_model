@@ -16,6 +16,7 @@ from typing import Literal, get_args
 import joblib
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sklearn.base import clone
 from sklearn.metrics import mean_squared_error
@@ -65,6 +66,37 @@ app = FastAPI(
         "Open Data, Jan 2025 - Sep 2026)."
     ),
     version="1.0.0",
+)
+
+# CORS (Cross-Origin Resource Sharing) decides which WEBSITES may call this API
+# from a browser. It does not restrict the Flutter mobile app, because a phone
+# app is not a browser and does not send CORS checks.
+#
+# What I allow:
+#   - allow_origins: only the two browser origins that need the API, namely the
+#     deployed Render site (where the Swagger UI is served) and the local
+#     Flutter web debug server (flutter run -d chrome --web-port 8080). No "*"
+#     wildcard: with "*", any website on the internet could use this API from
+#     its visitors' browsers and run up traffic on the free Render service.
+#   - allow_methods: only GET (docs) and POST (/predict and /retrain), the only
+#     methods this API uses. PUT, PATCH and DELETE are refused because there is
+#     nothing to update or delete.
+#   - allow_headers: only Content-Type (JSON bodies and CSV uploads) and Accept,
+#     the only headers the app and Swagger send. Anything else is refused.
+#   - allow_credentials=False: the API has no logins, cookies or sessions, so
+#     browsers must not send the user's cookies or auth headers with requests.
+ALLOWED_ORIGINS = [
+    "https://bus-delay-prediction-api.onrender.com",  # deployed API + Swagger UI on Render
+    "http://localhost:8080",                          # Flutter web debug server
+    "http://127.0.0.1:8080",                          # same, by IP address
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Accept"],
+    allow_credentials=False,
 )
 
 
