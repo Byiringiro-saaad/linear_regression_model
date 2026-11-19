@@ -1,17 +1,38 @@
-# bus_delay_app
+# Bus Delay Predictor (Flutter app)
 
-Predicts bus delays from the Bus Delay Prediction API
+A one-page mobile app that predicts how many minutes a bus will be delayed. It sends the trip details to the live Bus Delay Prediction API:
 
-## Getting Started
+`POST https://bus-delay-prediction-api.onrender.com/predict`
 
-This project is a starting point for a Flutter application.
+## Inputs
 
-A few resources to get you started if this is your first Flutter project:
+| Field | Allowed values |
+|---|---|
+| Route number | 1 to 999, e.g. 29 |
+| Direction | N, S, E or W |
+| Incident code | e.g. MFDV (on diversion), MFUS, EFO, or OTHER |
+| Hour of the day | 0 to 23 |
+| Day of the week | 0 = Monday ... 6 = Sunday |
+| Month | 1 to 12 |
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Press **Predict** to see the predicted delay in minutes. If a value is missing, the wrong type or out of range, the app shows the reason instead.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## How to run
+
+Requirements: the [Flutter SDK](https://docs.flutter.dev/get-started/install) and an iOS simulator or Android emulator (or a phone connected by USB).
+
+```bash
+cd summative/FlutterApp
+flutter pub get
+flutter devices          # find the id of your simulator / emulator
+flutter run -d <device-id>
+```
+
+The API runs on Render's free plan, which sleeps when idle, so the first prediction can take up to a minute while the server wakes up.
+
+## Tests
+
+```bash
+flutter analyze
+flutter test
+```
