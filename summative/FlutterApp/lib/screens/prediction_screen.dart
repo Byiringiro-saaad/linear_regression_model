@@ -24,6 +24,8 @@ class _PredictionScreenState extends State<PredictionScreen> {
     for (final spec in tripInputs) spec.key: TextEditingController(),
   };
 
+  final ScrollController _scroll = ScrollController();
+
   bool _loading = false;
   String? _result; // predicted delay, shown in the result area
   String? _error; // readable error message, shown instead of a result
@@ -33,7 +35,20 @@ class _PredictionScreenState extends State<PredictionScreen> {
     for (final controller in _controllers.values) {
       controller.dispose();
     }
+    _scroll.dispose();
     super.dispose();
+  }
+
+  /// Scrolls down so the result area is visible on small screens.
+  void _showResultArea() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scroll.hasClients) return;
+      _scroll.animateTo(
+        _scroll.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   /// Reads the fields and builds the request body. Throws a
@@ -78,7 +93,10 @@ class _PredictionScreenState extends State<PredictionScreen> {
       _error = 'Something went wrong while contacting the server. '
           'Please try again.';
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+        _showResultArea();
+      }
     }
   }
 
@@ -94,6 +112,7 @@ class _PredictionScreenState extends State<PredictionScreen> {
       ),
       body: SafeArea(
         child: ListView(
+          controller: _scroll,
           padding: const EdgeInsets.all(16),
           children: [
             Text(

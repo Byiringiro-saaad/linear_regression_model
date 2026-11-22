@@ -12,6 +12,8 @@ so a schedule platform can publish adjusted arrival times.
 **TTC Bus Delay Data** from the City of Toronto Open Data portal: [open.toronto.ca/dataset/ttc-bus-delay-data](https://open.toronto.ca/dataset/ttc-bus-delay-data/).
 It has 107,349 recorded bus delays (January 2025 to September 2026), each with the route, direction, incident code, date, time and delay in minutes. African cities do not yet publish open bus delay data, so this well-documented dataset is used to build and test the prototype; the same approach can be retrained on local data once it is collected. After cleaning, 81,967 rows and 8 features were used. The best model is a Random Forest (test MSE 107.9, compared with 198.4 for always predicting the average).
 
+**How the notebook gets the data:** it downloads the CSV directly from the portal's [official link](https://ckan0.cf.opendata.inter.prod-toronto.ca/dataset/e271cdae-8788-4980-96ce-6a5c95bc6618/resource/b5725365-9252-4bfe-b6f4-cda7ddf74341/download/ttc-bus-delay-data-since-2025.csv), so no files need to be downloaded to run it. The portal adds a new month of delays every month, so the notebook keeps only the rows up to **30 September 2026**; this way anyone who runs it gets the same data and the same results as reported here. An identical copy of the files is kept in `summative/linear_regression/` and is loaded automatically if the portal is unavailable.
+
 ## API (Swagger UI)
 
 **https://bus-delay-prediction-api.onrender.com/docs**

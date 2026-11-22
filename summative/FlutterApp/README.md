@@ -15,6 +15,8 @@ A one-page mobile app that predicts how many minutes a bus will be delayed. It s
 | Day of the week | 0 = Monday ... 6 = Sunday |
 | Month | 1 to 12 |
 
+Direction, incident code and day of the week also have a list button: tap it to choose a value from a list with plain descriptions (for example *Bus on diversion* for `MFDV`), and it is filled into the text field.
+
 Press **Predict** to see the predicted delay in minutes. If a value is missing, the wrong type or out of range, the app shows the reason instead.
 
 ## How to run
