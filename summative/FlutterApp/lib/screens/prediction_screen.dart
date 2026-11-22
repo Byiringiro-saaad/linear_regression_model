@@ -51,53 +51,64 @@ class _PredictionScreenState extends State<PredictionScreen> {
     });
   }
 
-  /// Reads the fields and builds the request body. Throws a
-  /// [PredictionException] when a field is empty or a number field is not a
-  /// whole number. Ranges and allowed codes are checked by the API itself.
-  Map<String, Object> _readInputs() {
-    final body = <String, Object>{};
+  /// Checks the fields before anything is sent: returns a readable message
+  /// for the first field that is empty, or a number field that is not a whole
+  /// number, or null when all fields are filled in correctly. Ranges and
+  /// allowed codes are checked by the API itself.
+  String? _validateInputs() {
     for (final spec in tripInputs) {
       final text = _controllers[spec.key]!.text.trim();
       if (text.isEmpty) {
-        throw PredictionException('Please fill in "${spec.label}".');
+        return 'Please fill in "${spec.label}".';
       }
-      if (spec.isNumber) {
-        final value = int.tryParse(text);
-        if (value == null) {
-          throw PredictionException(
-              '"${spec.label}" must be a whole number (${spec.hint}).');
-        }
-        body[spec.key] = value;
-      } else {
-        body[spec.key] = text.toUpperCase();
+      if (spec.isNumber && int.tryParse(text) == null) {
+        return '"${spec.label}" must be a whole number (${spec.hint}).';
       }
     }
-    return body;
+    return null;
+  }
+
+  /// Builds the request body from the fields (call after [_validateInputs]).
+  Map<String, Object> _readInputs() {
+    return {
+      for (final spec in tripInputs)
+        spec.key: spec.isNumber
+            ? int.parse(_controllers[spec.key]!.text.trim())
+            : _controllers[spec.key]!.text.trim().toUpperCase(),
+    };
   }
 
   Future<void> _predict() async {
     FocusScope.of(context).unfocus();
+
+    final inputError = _validateInputs();
+    if (inputError != null) {
+      setState(() {
+        _result = null;
+        _error = inputError;
+      });
+      _showResultArea();
+      return;
+    }
+
     setState(() {
       _result = null;
       _error = null;
+      _loading = true;
     });
 
-    try {
-      final trip = _readInputs();
-      setState(() => _loading = true);
-      final minutes = await _service.predictDelay(trip);
-      _result = '${minutes.toStringAsFixed(1)} minutes';
-    } on PredictionException catch (e) {
-      _error = e.message;
-    } catch (_) {
-      _error = 'Something went wrong while contacting the server. '
-          'Please try again.';
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-        _showResultArea();
+    final outcome = await _service.predictDelay(_readInputs());
+    if (!mounted) return;
+
+    setState(() {
+      _loading = false;
+      if (outcome.isSuccess) {
+        _result = '${outcome.minutes!.toStringAsFixed(1)} minutes';
+      } else {
+        _error = outcome.error;
       }
-    }
+    });
+    _showResultArea();
   }
 
   @override
