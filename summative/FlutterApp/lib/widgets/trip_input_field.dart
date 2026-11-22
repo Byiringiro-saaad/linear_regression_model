@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/input_field_spec.dart';
 import 'option_picker_sheet.dart';
+import 'text_field_menu.dart';
 
 /// One labelled text field for a trip input.
 ///
@@ -50,6 +51,7 @@ class TripInputField extends StatelessWidget {
       valueListenable: controller,
       builder: (context, value, _) => TextField(
         controller: controller,
+        contextMenuBuilder: textFieldMenu,
         keyboardType:
             spec.isNumber ? TextInputType.number : TextInputType.text,
         textCapitalization: TextCapitalization.characters,

@@ -17,8 +17,7 @@ class PredictionScreen extends StatefulWidget {
 }
 
 class _PredictionScreenState extends State<PredictionScreen> {
-  late final PredictionService _service =
-      widget.service ?? PredictionService();
+  late final PredictionService _service = widget.service ?? PredictionService();
 
   final Map<String, TextEditingController> _controllers = {
     for (final spec in tripInputs) spec.key: TextEditingController(),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/pick_options.dart';
+import 'text_field_menu.dart';
 
 /// Opens a bottom sheet listing [options] and returns the chosen value,
 /// or null if the sheet is closed without choosing.
@@ -69,6 +70,7 @@ class _OptionPickerSheetState extends State<OptionPickerSheet> {
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: TextField(
                 autofocus: false,
+                contextMenuBuilder: textFieldMenu,
                 decoration: const InputDecoration(
                   hintText: 'Search, e.g. diversion or weather',
                   prefixIcon: Icon(Icons.search),
