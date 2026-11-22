@@ -9,13 +9,15 @@ Run locally:  uvicorn prediction:app --reload
 """
 
 import io
+import os
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, get_args
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sklearn.base import clone
@@ -26,6 +28,11 @@ MODEL_PATH = BASE_DIR / "best_model.pkl"
 TRAINING_DATA_PATH = BASE_DIR / "training_data.csv"
 TARGET = "Min Delay"
 MAX_DELAY = 120  # same outlier rule as the notebook (Section 2.2)
+
+# /records collects new delay records as they happen; once this many have
+# arrived, the model is retrained automatically (can be changed on Render
+# with the RETRAIN_THRESHOLD environment variable)
+RETRAIN_THRESHOLD = int(os.environ.get("RETRAIN_THRESHOLD", "100"))
 
 # Column order the pipeline was trained with (Section 2.3 of the notebook)
 FEATURES = [
@@ -55,6 +62,15 @@ model = joblib.load(MODEL_PATH)
 model.set_params(model__n_jobs=1)  # Render's free plan has a single CPU
 training_data = pd.read_csv(TRAINING_DATA_PATH)
 retrain_lock = threading.Lock()
+
+pending_records: list[dict] = []  # new records waiting for the next retrain
+pending_lock = threading.Lock()
+model_status = {
+    "retrain_count": 0,
+    "last_retrained_at": None,
+    "last_trigger": None,
+    "last_new_rows": 0,
+}
 
 
 app = FastAPI(
@@ -129,6 +145,28 @@ class BusTrip(BaseModel):
     month: int = Field(..., ge=1, le=12, description="Month (1-12)")
 
 
+class DelayRecord(BusTrip):
+    """One observed trip with its real delay, sent to /records."""
+
+    model_config = ConfigDict(
+        strict=True,
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "route_number": 29,
+                "direction": "N",
+                "incident_code": "MFDV",
+                "hour": 8,
+                "day_of_week": 1,
+                "month": 3,
+                "min_delay": 40,
+            }
+        },
+    )
+
+    min_delay: int = Field(..., ge=0, le=MAX_DELAY, description="Observed delay in minutes (0-120)")
+
+
 class PredictionResponse(BaseModel):
     predicted_delay_minutes: float = Field(..., description="Predicted delay in minutes")
 
@@ -141,6 +179,24 @@ class RetrainResponse(BaseModel):
     total_training_rows: int = Field(..., description="Original rows + new rows the model was refitted on")
     new_data_mse_before: float = Field(..., description="MSE of the old model on the uploaded rows")
     new_data_mse_after: float = Field(..., description="MSE of the retrained model on the uploaded rows")
+
+
+class RecordsResponse(BaseModel):
+    message: str
+    records_received: int = Field(..., description="Records accepted in this request")
+    pending_records: int = Field(..., description="New records waiting for the next automatic retrain")
+    retrain_threshold: int = Field(..., description="Number of new records that triggers a retrain")
+    retraining_started: bool = Field(..., description="True if this request triggered an automatic retrain")
+
+
+class ModelStatus(BaseModel):
+    retrain_count: int = Field(..., description="How many times the model has been retrained since the service started")
+    last_retrained_at: str | None = Field(..., description="UTC time of the last retrain")
+    last_trigger: str | None = Field(..., description="What triggered the last retrain: 'upload' or 'new records'")
+    last_new_rows: int = Field(..., description="New rows added in the last retrain")
+    training_rows: int = Field(..., description="Rows the current model was trained on")
+    pending_records: int = Field(..., description="New records waiting for the next automatic retrain")
+    retrain_threshold: int = Field(..., description="Number of new records that triggers a retrain")
 
 
 def add_derived_features(frame: pd.DataFrame) -> pd.DataFrame:
@@ -205,6 +261,35 @@ def clean_new_rows(raw: pd.DataFrame) -> pd.DataFrame:
     return add_derived_features(df)[FEATURES + [TARGET]]
 
 
+def refit_with(new_rows: pd.DataFrame, trigger: str) -> tuple[float, float, int]:
+    """Refit the model on the original data plus new_rows and put it in use.
+
+    The caller must hold retrain_lock. Returns the MSE of the old and the new
+    model on the new rows, and the number of rows the new model was fitted on.
+    """
+    global model, training_data
+
+    X_new, y_new = new_rows[FEATURES], new_rows[TARGET]
+    mse_before = mean_squared_error(y_new, model.predict(X_new))
+
+    combined = pd.concat([training_data, new_rows], ignore_index=True)
+    new_model = clone(model)
+    # sparse one-hot output gives the same model but uses far less memory,
+    # which keeps retraining within Render's 512 MB free plan
+    new_model.set_params(preprocess__categorical__sparse_output=True)
+    new_model.fit(combined[FEATURES], combined[TARGET])
+
+    mse_after = mean_squared_error(y_new, new_model.predict(X_new))
+    model, training_data = new_model, combined  # /predict now uses the new model
+    model_status.update(
+        retrain_count=model_status["retrain_count"] + 1,
+        last_retrained_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        last_trigger=trigger,
+        last_new_rows=len(new_rows),
+    )
+    return mse_before, mse_after, len(combined)
+
+
 @app.post("/retrain", response_model=RetrainResponse)
 def retrain(file: UploadFile = File(..., description="CSV with the training data columns")):
     """Upload a CSV of new bus delay records; the model is refitted and used straight away.
@@ -214,8 +299,6 @@ def retrain(file: UploadFile = File(..., description="CSV with the training data
     The best model is a RandomForestRegressor, which cannot learn incrementally,
     so it is refitted on the original training data plus the new rows.
     """
-    global model, training_data
-
     if not (file.filename or "").lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a .csv file.")
     try:
@@ -238,18 +321,7 @@ def retrain(file: UploadFile = File(..., description="CSV with the training data
     if not retrain_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="A retraining is already running. Try again shortly.")
     try:
-        X_new, y_new = new_rows[FEATURES], new_rows[TARGET]
-        mse_before = mean_squared_error(y_new, model.predict(X_new))
-
-        combined = pd.concat([training_data, new_rows], ignore_index=True)
-        new_model = clone(model)
-        # sparse one-hot output gives the same model but uses far less memory,
-        # which keeps retraining within Render's 512 MB free plan
-        new_model.set_params(preprocess__categorical__sparse_output=True)
-        new_model.fit(combined[FEATURES], combined[TARGET])
-
-        mse_after = mean_squared_error(y_new, new_model.predict(X_new))
-        model, training_data = new_model, combined  # /predict now uses the new model
+        mse_before, mse_after, total_rows = refit_with(new_rows, trigger="upload")
     finally:
         retrain_lock.release()
 
@@ -258,7 +330,69 @@ def retrain(file: UploadFile = File(..., description="CSV with the training data
         rows_uploaded=len(raw),
         rows_used=len(new_rows),
         rows_dropped=len(raw) - len(new_rows),
-        total_training_rows=len(combined),
+        total_training_rows=total_rows,
         new_data_mse_before=round(mse_before, 2),
         new_data_mse_after=round(mse_after, 2),
+    )
+
+
+def retrain_from_records(rows: list[dict]) -> None:
+    """Background task: retrain on the collected records (waits if a retrain is running)."""
+    new_rows = add_derived_features(pd.DataFrame(rows))[FEATURES + [TARGET]]
+    with retrain_lock:
+        refit_with(new_rows, trigger="new records")
+
+
+@app.post("/records", response_model=RecordsResponse)
+def add_records(records: list[DelayRecord], background_tasks: BackgroundTasks):
+    """Send newly observed trips with their real delay, as they happen.
+
+    Each record is validated like a /predict input, plus its real delay
+    (min_delay, 0-120). The records are collected, and as soon as
+    RETRAIN_THRESHOLD new records have arrived, the model is retrained
+    automatically in the background on the original data plus the new records.
+    The response returns straight away; /model-status shows when the new
+    model is in use.
+    """
+    if not records:
+        raise HTTPException(status_code=400, detail="Send at least one record.")
+
+    batch = None
+    with pending_lock:
+        for record in records:
+            row = record.model_dump()
+            row[TARGET] = row.pop("min_delay")
+            pending_records.append(row)
+        if len(pending_records) >= RETRAIN_THRESHOLD:
+            batch = pending_records.copy()
+            pending_records.clear()
+        pending = len(pending_records)
+
+    if batch is not None:
+        background_tasks.add_task(retrain_from_records, batch)
+        message = (f"{len(batch)} new records collected: the model is being retrained "
+                   "automatically and will be used as soon as it is ready.")
+    else:
+        message = (f"Records saved. The model retrains automatically after "
+                   f"{RETRAIN_THRESHOLD - pending} more record(s).")
+
+    return RecordsResponse(
+        message=message,
+        records_received=len(records),
+        pending_records=pending,
+        retrain_threshold=RETRAIN_THRESHOLD,
+        retraining_started=batch is not None,
+    )
+
+
+@app.get("/model-status", response_model=ModelStatus)
+def get_model_status():
+    """Show when the model was last retrained and how many new records are waiting."""
+    with pending_lock:
+        pending = len(pending_records)
+    return ModelStatus(
+        **model_status,
+        training_rows=len(training_data),
+        pending_records=pending,
+        retrain_threshold=RETRAIN_THRESHOLD,
     )

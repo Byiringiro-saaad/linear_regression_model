@@ -17,7 +17,9 @@ It has 107,349 recorded bus delays (January 2025 to September 2026), each with t
 **https://bus-delay-prediction-api.onrender.com/docs**
 
 - `POST /predict`: predicts the delay in minutes for one trip.
-- `POST /retrain`: upload a CSV of new delay records (for example `summative/API/sample_retrain_data.csv`) to refit the model.
+- `POST /records`: send newly observed trips with their real delay as they happen. Once enough new records arrive (`RETRAIN_THRESHOLD`, default 100), the model **retrains automatically** in the background and is used straight away.
+- `POST /retrain`: upload a CSV of new delay records (for example `summative/API/sample_retrain_data.csv`) to retrain the model immediately.
+- `GET /model-status`: shows when the model was last retrained, what triggered it, and how many new records are waiting.
 
 The API runs on Render's free plan, which sleeps when idle, so the first request can take up to a minute.
 
