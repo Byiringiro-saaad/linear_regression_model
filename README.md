@@ -27,7 +27,7 @@ The API runs on Render's free plan, which sleeps when idle, so the first request
 
 ## Video demo
 
-YouTube: **[ADD YOUTUBE LINK]**
+YouTube: **https://www.youtube.com/playlist?list=PLHC3FL22HdcU**
 
 ## How to run the mobile app
 
